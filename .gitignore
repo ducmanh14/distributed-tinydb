@@ -1,0 +1,6 @@
+//File này bảo Git bỏ qua các file dữ liệu rác,
+// không đẩy chúng lên GitHub để tránh làm rối mã nguồn của bạn.
+venv/
+__pycache__/
+*.pyc
+data/
