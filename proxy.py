@@ -5,58 +5,65 @@ import requests
 
 app = FastAPI()
 
-# Cấu hình địa chỉ URL của 2 trạm dữ liệu (Chúng ta sẽ chạy ở các cổng khác nhau)
-MASTER_NODE = "http://127.0.0.1:8001"
-SLAVE_NODE = "http://127.0.0.1:8002"
+# Quy định kiến trúc Ngày 3:
+# Shard A (Port 8001) chịu trách nhiệm lưu trữ các dữ liệu có ID CHẴN
+# Shard B (Port 8002) chịu trách nhiệm lưu trữ các dữ liệu có ID LẺ
+SHARD_A = "http://127.0.0.1:8001"
+SHARD_B = "http://127.0.0.1:8002"
 
-class DataPayload(BaseModel):
-    data: dict
+class ShardDataPayload(BaseModel):
+    id: int  # Bắt buộc phải có ID để thuật toán Sharding phân loại
+    content: dict
 
 @app.get("/")
 def proxy_status():
-    return {"status": "Proxy điều phối đang hoạt động", "mode": "Master-Slave Replication"}
+    return {"status": "Proxy Router đang hoạt động", "mode": "Sharding (Even/Odd ID Split)"}
 
-# 1. TÍNH NĂNG GHI: Ghi vào Master, tự động nhân bản sang Slave
-@app.post("/replication/insert")
-def replication_insert(payload: DataPayload):
-    # Bước 1: Ghi dữ liệu vào Master Node
+# 1. TÍNH NĂNG GHI ĐA MẢNH (SHARDING INSERT)
+@app.post("/sharding/insert")
+def sharding_insert(payload: ShardDataPayload):
+    data_id = payload.id
+    
+    # Thuật toán định tuyến dữ liệu (Routing Algorithm)
+    if data_id % 2 == 0:
+        target_shard = SHARD_A
+        shard_name = "Shard A (Port 8001 - Chẵn)"
+    else:
+        target_shard = SHARD_B
+        shard_name = "Shard B (Port 8002 - Lẻ)"
+    
+    # Tiến hành đẩy dữ liệu vào Shard được chỉ định
     try:
-        response_master = requests.post(f"{MASTER_NODE}/insert", json={"data": payload.data})
-        master_result = response_master.json()
-    except Exception:
-        raise HTTPException(status_code=500, detail="Trạm Master bị sập! Hệ thống không thể ghi dữ liệu.")
-
-    # Bước 2: Tự động nhân bản (Replicate) ngầm sang Slave Node
-    try:
-        requests.post(f"{SLAVE_NODE}/insert", json={"data": payload.data})
-        slave_status = "Đồng bộ thành công"
-    except Exception:
-        slave_status = "Thất bại (Trạm Slave đang sập)"
-
-    return {
-        "message": "Tiến trình ghi hoàn tất",
-        "master_response": master_result,
-        "slave_synchronization": slave_status
-    }
-
-# 2. TÍNH NĂNG ĐỌC: Ưu tiên đọc từ Slave, tự động cứu hộ nếu Slave sập
-@app.get("/replication/read")
-def replication_read():
-    # Thử nghiệm đọc từ Slave trước để giảm tải cho Master
-    try:
-        res = requests.get(f"{SLAVE_NODE}/all")
+        response = requests.post(f"{target_shard}/insert", json={"data": {"id": data_id, "info": payload.content}})
         return {
-            "source": "Slave Node (Port 8002)",
-            "data": res.json()
+            "message": "Phân mảnh dữ liệu thành công",
+            "assigned_shard": shard_name,
+            "node_response": response.json()
         }
     except Exception:
-        # Nếu Slave sập, tự động chuyển hướng (Failover) sang đọc từ Master
-        print("[CẢNH BÁO] Slave Node bị sập! Tự động kích hoạt cơ chế cứu hộ Failover sang Master.")
-        try:
-            res = requests.get(f"{MASTER_NODE}/all")
-            return {
-                "source": "Master Node (Port 8001) - Chế độ cứu hộ (Failover)",
-                "data": res.json()
-            }
-        except Exception:
-            raise HTTPException(status_code=500, detail="Toàn bộ hệ thống trạm dữ liệu đã sập!")
+        raise HTTPException(status_code=500, detail=f"Không thể kết nối tới {shard_name}. Trạm này có thể đã sập!")
+
+# 2. TÍNH NĂNG ĐỌC TỔNG HỢP TỪ TẤT CẢ CÁC SHARD (SCATTER-GATHER)
+@app.get("/sharding/all")
+def sharding_get_all():
+    combined_data = []
+    
+    # Thu thập từ Shard A
+    try:
+        res_a = requests.get(f"{SHARD_A}/all").json()
+        combined_data.extend(res_a)
+    except Exception:
+        print("[CẢNH BÁO] Không thể lấy dữ liệu từ Shard A")
+        
+    # Thu thập từ Shard B
+    try:
+        res_b = requests.get(f"{SHARD_B}/all").json()
+        combined_data.extend(res_b)
+    except Exception:
+        print("[CẢNH BÁO] Không thể lấy dữ liệu từ Shard B")
+        
+    return {
+        "description": "Dữ liệu được gộp lại từ tất cả các mảnh (Shard A + Shard B)",
+        "total_records": len(combined_data),
+        "data": combined_data
+    }
