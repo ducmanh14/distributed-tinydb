@@ -370,6 +370,12 @@ Khoa Công nghệ Thông tin – Đại học Phenikaa
 
 ---
 
+# Giảng viên
+
+**Nguyễn Lệ Thu**
+
+---
+
 # Môn học
 
 Bài tập lớn môn **Hệ Thống Phân Tán**
